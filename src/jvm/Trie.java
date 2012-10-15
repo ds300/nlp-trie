@@ -1,7 +1,9 @@
 package nlp.trie;
 import clojure.lang.IPersistentMap;
+import clojure.lang.PersistentVector;
 
 public class Trie {
+  private final int     _count;
   private final int     _freq;
   private final int     _tfreq;
   private final boolean _terminal;
@@ -12,6 +14,7 @@ public class Trie {
   private final Object  _data;
 
   public Trie () {
+    _count    = 0;
     _freq     = 0;
     _tfreq    = 0;
     _terminal = false;
@@ -23,6 +26,7 @@ public class Trie {
   }
 
   public Trie (Trie t) {
+    _count    = t._count;
     _freq     = t._freq;
     _tfreq    = t._tfreq;
     _terminal = t._terminal;
@@ -33,7 +37,8 @@ public class Trie {
     _data     = t._data;
   }
 
-  public Trie (int freq, int tfreq, boolean terminal, char[] keys, Trie[] nodes, Object data) {
+  public Trie (int count, int freq, int tfreq, boolean terminal, char[] keys, Trie[] nodes, Object data) {
+    _count = count;
     _freq = freq;
     _tfreq = tfreq;
     _terminal = terminal;
@@ -46,7 +51,8 @@ public class Trie {
     toCompleteBinaryTree(_tkeys, _tnodes);
   }
 
-  public Trie (int freq, int tfreq, boolean terminal, char[] keys, Trie[] nodes, char[] tkeys, Trie[] tnodes, Object data) {
+  public Trie (int count, int freq, int tfreq, boolean terminal, char[] keys, Trie[] nodes, char[] tkeys, Trie[] tnodes, Object data) {
+    _count = count;
     _freq = freq;
     _tfreq = tfreq;
     _terminal = terminal;
@@ -60,6 +66,7 @@ public class Trie {
   }
 
   public Trie (String word, int freq, Object data) {
+    _count = 1;
     _freq = freq;
     if (word.length() == 0) {
       _terminal = true;
@@ -160,16 +167,16 @@ public class Trie {
   }
 
   public Trie merge (Trie t) {
-
+    final int count = _count + t._count;
     final int freq = _freq + t._freq;
     final int tfreq = _tfreq + t._tfreq;
     final boolean terminal = _terminal || t._terminal;
     final Object data = t._data != null ? t._data : _data;
 
     if (_keys.length == 0) {
-      return new Trie(count, tfreq, terminal, t._keys, t._nodes, t._tkeys, t._tnodes data);
+      return new Trie(count, freq, tfreq, terminal, t._keys, t._nodes, t._tkeys, t._tnodes data);
     } else if (t._keys.length == 0) {
-      return new Trie(count, tfreq, terminal, _keys, _nodes, _tkeys, _tnodes, data);
+      return new Trie(count, freq, tfreq, terminal, _keys, _nodes, _tkeys, _tnodes, data);
     } else {
       // clone and sort original data structures
 
@@ -213,7 +220,7 @@ public class Trie {
         j++;
         k++;
       }
-      return new Trie(freq, tfreq, terminal, rks, rns, data);
+      return new Trie(count, freq, tfreq, terminal, rks, rns, data);
     }
   }
 
@@ -246,34 +253,90 @@ public class Trie {
         return new Trie();
       } else {
         // there's stuff coming off from this node, so just make it not terminal
-        return new Trie(_freq - freq, 0, false, _keys, _nodes, _tkeys, _tnodes, null);
+        return new Trie(_count - 1, _freq - freq, 0, false, _keys, _nodes, _tkeys, _tnodes, null);
       }
     } else {
       int x = getSortedChildIndex(s.charAt(0));
       int y = getChildIndex(s.charAt(0));
       Trie replacement = _nodes[x].remove(s.substring(1), freq);
-      boolean include_replacement = replacement._terminal || replacement._keys.length > 0; // YES?? DUNNO MATE
+      boolean include_replacement = replacement._terminal || replacement._keys.length > 0; // YES?? DUNNO MATE maybe count == 0?
       if (include_replacement) {
         Trie[] rns = _nodes.clone();
         Trie[] rtns = _tnodes.clone();
         rns[x] = replacement;
         rtns[y] = replacement;
-        return new Trie(_freq - freq, _tfreq, _terminal, _keys, rns, _tkeys, rtns, _data);
+        return new Trie(_count - 1, _freq - freq, _tfreq, _terminal, _keys, rns, _tkeys, rtns, _data);
       } else {
         // do interesting shit
+        char[] rks = new char[_keys.length - 1];
+        Trie[] rns = new Trie[_keys.length - 1];
+        System.arrayCopy(_keys, 0, rks, 0, x);
+        System.arrayCopy(_keys, x, rks, x, _keys.length-1-x);
+        return new Trie(_count - 1, _freq - freq, _tfreq, _terminal, rks, rns, _data);
       }
-
     }
   }
 
   @Override
   public Trie without(Object key) {
     Trie end = endNode((String) key);
-    if (end == null || !end.terminal) {
+    if (end == null || !end._terminal) {
       return this;
     } else {
       return remove((String) key, end._tfreq);
     }
+  }
+
+  @Override
+  public Iterator iterator () {
+    return new TrieIterator(this);
+  }
+
+  private class TrieIterator implements Iterator<String> {
+    private class Item {
+      public String acc;
+      public Trie node;
+      public int child_id = 0;
+      public boolean done = false;
+      public Item (String acc, Trie node) {
+        this.acc = acc;
+        this.node = node;
+      }
+    }
+    private Stack<Item> stack = new Stack<Item>();
+    private PersistentVector head;
+    public TrieIterator (Trie root) {
+      stack.push(new Item("", root));
+      head = _next();
+    }
+    @Override
+    public boolean hasNext () {
+      return head != null;
+    }
+    @Override
+    public String next() {
+      PersistentVector v = head;
+      head = _next();
+      return v;
+    }
+    private String _next () {
+      if (stack.empty()) return null;
+      Item item = stack.peek();
+      if (!item.done && item.node.terminal > 0) {
+        item.done = true;
+        return PersistentVector.create(new Object[]{item.acc, new Long(item.node._tfreq), item.node._data});
+      } else if (item.child_id >= item.node.child_nodes.length) {
+        stack.pop();
+        return _next();
+      } else {
+        stack.push(new Item(item.acc + item.node._keys[item.child_id],
+                            item.node._nodes[item.child_id]));
+        item.child_id++;
+        return _next();
+      }
+    }
+    @Override
+    public void remove () {}
   }
 
 
